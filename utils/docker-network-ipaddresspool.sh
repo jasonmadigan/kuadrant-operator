@@ -6,14 +6,33 @@
 # Example:
 # ./utils/docker-network-ipaddresspool.sh kind | kubectl apply -n metallb-system -f -
 
+trap 'echo "Error on line $LINENO: $BASH_COMMAND"' ERR
+
+
 set -euo pipefail
 
 networkName=$1
 YQ="${2:-yq}"
 
+containerRuntime() {
+  local container_runtime=""
+
+  if command -v docker &> /dev/null; then
+    container_runtime="docker"
+  elif command -v podman &> /dev/null; then
+    container_runtime="podman"
+  else
+    echo "Neither Docker nor Podman is installed. Exiting..."
+    exit 1
+  fi
+  echo "$container_runtime"
+}
+
+export CONTAINER_RUNTIME_BIN=$(containerRuntime)
+
 ## Parse kind network subnet
 ## Take only IPv4 subnets, exclude IPv6
-SUBNET=$(docker network inspect $networkName --format '{{json .IPAM.Config }}' | \
+SUBNET=$($CONTAINER_RUNTIME_BIN network inspect $networkName --format '{{json .IPAM.Config }}' | \
     ${YQ} '.[] | select( .Subnet | test("^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}/\d+$")) | .Subnet')
 if [[ -z "$SUBNET" ]]; then
    echo "Error: parsing IPv4 network address for '$networkName' docker network"
