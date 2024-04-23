@@ -59,10 +59,6 @@ if [ -z $MGC_REF ]; then
   MGC_REF=${MGC_REF:="main"}
 fi
 
-if [ -z $ISTIO_INSTALL_SAIL ]; then
-  ISTIO_INSTALL_SAIL=${ISTIO_INSTALL_SAIL:=false}
-fi
-
 export TOOLS_IMAGE=quay.io/kuadrant/mgc-tools:latest
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export TMP_DIR=$SCRIPT_DIR/tmp/mgc
@@ -70,6 +66,9 @@ export CONTAINER_RUNTIME_BIN=$(containerRuntime)
 export KIND_BIN=kind
 export HELM_BIN=helm
 export KUSTOMIZE_BIN=$(dockerBinCmd "kustomize")
+
+# Default to 1 cluster if KUADRANT_CLUSTER_COUNT is not set
+KUADRANT_CLUSTER_COUNT=${KUADRANT_CLUSTER_COUNT:-1}
 
 YQ_BIN=$(dockerBinCmd "yq")
 
@@ -303,8 +302,12 @@ EOF
 }
 
 setupClusterIssuer() {
-  info "Creating a default ClusterIssuer... 🔒"
-  kubectl --context kind-${KUADRANT_CLUSTER_NAME} apply -f - <<EOF
+  info "Creating a default ClusterIssuer on ${clusterName}... 🔒"
+  clusterName=${1}
+  kubectl config use-context kind-${clusterName}
+
+  echo "woop woop kind-${clusterName}"
+  kubectl --context kind-${clusterName} apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -312,7 +315,8 @@ metadata:
 spec:
   selfSigned: {}
 EOF
-  success "ClusterIssuer created"
+  kubectl --context kind-${clusterName} wait --for=condition=available --timeout=300s deployment --all -n cert-manager
+  success "ClusterIssuer created on ${clusterName}"
 }
 
 postSetup() {
@@ -388,88 +392,117 @@ case $SETUP_PROVIDER in
   ;;
 esac
 
-# Kind delete cluster
-info "Deleting existing Kubernetes cluster if present... 🗑️"
-${KIND_BIN} delete cluster --name ${KUADRANT_CLUSTER_NAME}
-success "Existing cluster (if present) deleted successfully."
+delete_networks() {
+  for ((i = 1; i <= KUADRANT_CLUSTER_COUNT; i++)); do
+    local network_name="kind-${i}"
+    if ${CONTAINER_RUNTIME_BIN} network exists "${network_name}"; then
+      echo "Deleting network ${network_name}"
+      ${CONTAINER_RUNTIME_BIN} network rm "${network_name}" || true
+    fi
+  done
+}
 
-# Kind create cluster
-info "Creating a new Kubernetes cluster... 🌟"
-${KIND_BIN} create cluster --name ${KUADRANT_CLUSTER_NAME} --config=- <<<"$(curl -s ${KUADRANT_REPO_RAW}/utils/kind-cluster.yaml)"
-kubectl config use-context kind-${KUADRANT_CLUSTER_NAME}
-success "Kubernetes cluster created successfully."
+create_clusters() {
+  local KUADRANT_CLUSTER_COUNT=$1
+  local CONTAINER_RUNTIME=$(containerRuntime)
+  info "Starting the setup process for $KUADRANT_CLUSTER_COUNT clusters... 🚀"
 
-# Create namespace
-info "Creating the necessary Kubernetes namespaces... 📦"
-kubectl create namespace ${KUADRANT_NAMESPACE}
-success "Kubernetes namespaces created successfully."
+  for ((i = 1; i <= KUADRANT_CLUSTER_COUNT; i++)); do
 
-# Install gateway api
-info "Installing Gateway API... 🌉"
-kubectl apply -k ${KUADRANT_GATEWAY_API_KUSTOMIZATION}
-success "Gateway API installed successfully."
+    local cluster_name="kuadrant-local-${i}"
+    local network_name="kind-${i}"
+    
+    # Start from a base offset of 90 to avoid clashing with existing 10.89.0.0/24 network
+    local base=$((89 + i))
+    local pod_subnet="10.${base}.0.0/16"
+    local service_subnet="10.$((base + 100)).0.0/16"
 
-# Install istio
-info "Installing Istio as a Gateway API provider... 🛫"
-if [ "$ISTIO_INSTALL_SAIL" = true ]; then
-  info "Installing Istio via Sail"
-  kubectl apply -k ${KUADRANT_ISTIO_KUSTOMIZATION}
-  kubectl -n istio-system wait --for=condition=Available deployment istio-operator --timeout=300s
-  kubectl apply -f ${KUADRANT_REPO_RAW}/config/dependencies/istio/sail/istio.yaml
-else
-  # Create CRD first to prevent race condition with creating CR
-  info "Generating Istio configuration... 🛠️"
-  kubectl kustomize ${MGC_ISTIO_KUSTOMIZATION} >${TMP_DIR}/doctmp
-  success "Istio configuration generated."
-  ${YQ_BIN} 'select(.kind == "CustomResourceDefinition")' ${TMP_DIR}/doctmp | kubectl apply -f -
-  kubectl -n istio-system wait --for=condition=established crd/istiooperators.install.istio.io --timeout=60s
-  cat ${TMP_DIR}/doctmp | kubectl apply -f -
-  kubectl -n istio-operator wait --for=condition=Available deployment istio-operator --timeout=300s
-fi
-success "Istio installed successfully."
+    # Create Docker network
+    if ! ${CONTAINER_RUNTIME_BIN} network create "${network_name}" --subnet "${pod_subnet}"; then
+      error "Failed to create Docker network ${network_name}"
+    fi
 
-# Install cert-manager
-info "Installing cert-manager... 🛡️"
-kubectl apply -k ${KUADRANT_CERT_MANAGER_KUSTOMIZATION}
-info "Waiting for cert-manager deployments to be ready"
-kubectl -n cert-manager wait --for=condition=Available deployments --all --timeout=300s
-setupClusterIssuer
-success "cert-manager installed successfully."
+    # Create Kind cluster with specific configurations
+    cat <<EOF | ${KIND_BIN} create cluster --name ${cluster_name} --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  podSubnet: "${pod_subnet}"
+  serviceSubnet: "${service_subnet}"
+nodes:
+- role: control-plane
+  image: kindest/node:v1.29.2
+EOF
 
-# Install metallb
-info "Installing MetalLB... 🏗️"
-{
-  kubectl apply -k ${KUADRANT_METALLB_KUSTOMIZATION} 2>&1
-} | grep -v "Warning: .* deprecated" || true
-kubectl -n metallb-system wait --for=condition=Available deployments controller --timeout=300s
-kubectl -n metallb-system wait --for=condition=ready pod --selector=app=metallb --timeout=60s
-info "Generating IP address pool for MetalLB..."
-generate_ip_address_pool "kind" | kubectl apply -n metallb-system -f -
-success "MetalLB installed and IP address pool generated successfully."
+    kubectl config use-context kind-${cluster_name}
+    success "Kubernetes cluster ${cluster_name} created successfully."
 
-# Install kuadrant
-info "Installing Kuadrant in ${KUADRANT_CLUSTER_NAME}..."
-{
-  kubectl apply -k ${KUADRANT_DEPLOY_KUSTOMIZATION} --server-side --validate=false 2>&1
-} | grep -v "Warning: .* deprecated" || true
+    # Creating Kubernetes namespace
+    info "Creating the necessary Kubernetes namespaces... 📦"
+    kubectl create namespace kuadrant-system
+    success "Kubernetes namespaces created successfully."
 
-info "Kuadrant installation applied, configuring ManagedZone if DNS provider is set..."
-if [ ! -z "$DNS_PROVIDER" ]; then
-  postSetup ${KUADRANT_CLUSTER_NAME} ${KUADRANT_NAMESPACE}
-fi
+    # Installing Gateway API
+    info "Installing Gateway API... 🌉"
+    kubectl apply -k "${KUADRANT_GATEWAY_API_KUSTOMIZATION}"
+    success "Gateway API installed successfully."
 
-# Deploy kuadrant
-info "Deploying Kuadrant sample configuration..."
-kubectl -n ${KUADRANT_NAMESPACE} apply -f ${KUADRANT_REPO_RAW}/config/samples/kuadrant_v1beta1_kuadrant.yaml
-success "Kuadrant sample configuration deployed."
+    # Installing Istio
+    info "Installing Istio as a Gateway API provider... 🛫"
+    kubectl apply -k "${KUADRANT_ISTIO_KUSTOMIZATION}"
+    kubectl -n istio-system wait --for=condition=Available deployment istio-operator --timeout=300s
+    success "Istio installed successfully."
 
-info "✨🌟 Setup Complete! Your Kuadrant Quick Start environment has been successfully created. 🌟✨"
+    # Installing cert-manager
+    info "Installing cert-manager... 🛡️"
+    kubectl apply -k "${KUADRANT_CERT_MANAGER_KUSTOMIZATION}"
+    kubectl -n cert-manager wait --for=condition=Available deployments --all --timeout=300s
+    success "cert-manager installed successfully."
+
+    # Installing MetalLB
+    info "Installing MetalLB... 🏗️"
+    kubectl apply -k "${KUADRANT_METALLB_KUSTOMIZATION}"
+    kubectl -n metallb-system wait --for=condition=Available deployments controller --timeout=300s
+    info "Generating IP address pool for MetalLB..."
+    generate_ip_address_pool "${network_name}" | kubectl apply -n metallb-system -f -
+    success "MetalLB installed and IP address pool generated successfully."
+
+    # Installing Kuadrant
+    info "Installing Kuadrant in ${cluster_name}..."
+    kubectl apply -k "${KUADRANT_DEPLOY_KUSTOMIZATION}" --server-side --validate=false
+    success "Kuadrant installed successfully."
+
+    info "Kuadrant installation applied, configuring ManagedZone if DNS provider is set..."
+    if [ ! -z "$DNS_PROVIDER" ]; then
+      postSetup ${cluster_name} ${KUADRANT_NAMESPACE}
+      setupClusterIssuer ${cluster_name}
+    fi
+
+    # Deploying Kuadrant sample configuration
+    info "Deploying Kuadrant sample configuration..."
+    kubectl -n kuadrant-system apply -f "${KUADRANT_REPO_RAW}/config/samples/kuadrant_v1beta1_kuadrant.yaml"
+    success "Kuadrant sample configuration deployed."
+  done
+
+  info "✨🌟 Setup complete! All ${KUADRANT_CLUSTER_COUNT} clusters are ready. 🌟✨"
+}
+
+info "Deleting existing Kubernetes clusters if present... 🗑️"
+for ((i = 1; i <= KUADRANT_CLUSTER_COUNT; i++)); do
+  ${KIND_BIN} delete cluster --name "kuadrant-local-${i}"
+done
+success "Existing clusters (if present) deleted successfully."
+delete_networks
+
+create_clusters $KUADRANT_CLUSTER_COUNT
+
+info "✨🌟 Setup complete! All ${KUADRANT_CLUSTER_COUNT} clusters are ready. 🌟✨"
 
 info "Here's what has been configured:"
 info "  - Kubernetes cluster with name '${KUADRANT_CLUSTER_NAME}'"
 info "  - a Kuadrant namespace 'kuadrant-system'"
 info "  - Gateway API"
-info "  - Istio installed $([ "$ISTIO_INSTALL_SAIL" = true ] && echo "via Sail" || echo "without Sail") as a Gateway API provider"
+info "  - Istio installed as a Gateway API provider"
 info "  - cert-manager"
 info "  - MetalLB with configured IP address pool"
 info "  - Kuadrant components and a sample configuration"
