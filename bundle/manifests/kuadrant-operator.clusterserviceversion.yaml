@@ -106,7 +106,7 @@ metadata:
     capabilities: Basic Install
     categories: Integration & Delivery
     containerImage: quay.io/kuadrant/kuadrant-operator:latest
-    createdAt: "2024-07-24T10:00:34Z"
+    createdAt: "2024-07-31T16:04:52Z"
     operators.operatorframework.io/builder: operator-sdk-v1.32.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
     repository: https://github.com/Kuadrant/kuadrant-operator
@@ -129,6 +129,9 @@ spec:
       kind: DNSPolicy
       name: dnspolicies.kuadrant.io
       version: v1alpha1
+    - kind: EffectivePolicy
+      name: effectivepolicies.kuadrant.io
+      version: v1beta2
     - description: Kuadrant configures installations of Kuadrant Service Protection
         components
       displayName: Kuadrant
@@ -409,6 +412,32 @@ spec:
         - apiGroups:
           - kuadrant.io
           resources:
+          - effectivepolicies
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - kuadrant.io
+          resources:
+          - effectivepolicies/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - kuadrant.io
+          resources:
+          - effectivepolicies/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - kuadrant.io
+          resources:
           - kuadrants
           verbs:
           - create
@@ -537,6 +566,22 @@ spec:
           - list
           - patch
           - update
+          - watch
+        - apiGroups:
+          - networking.k8s.io
+          resources:
+          - gateways
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - networking.k8s.io
+          resources:
+          - httproutes
+          verbs:
+          - get
+          - list
           - watch
         - apiGroups:
           - operator.authorino.kuadrant.io

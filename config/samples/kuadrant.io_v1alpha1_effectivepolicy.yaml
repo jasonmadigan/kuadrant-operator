@@ -1,0 +1,12 @@
+apiVersion: kuadrant.io.kuadrant.io/v1alpha1
+kind: EffectivePolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: effectivepolicy
+    app.kubernetes.io/instance: effectivepolicy-sample
+    app.kubernetes.io/part-of: kuadrant-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: kuadrant-operator
+  name: effectivepolicy-sample
+spec:
+  # TODO(user): Add fields here

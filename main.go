@@ -49,7 +49,10 @@ import (
 	kuadrantv1alpha1 "github.com/kuadrant/kuadrant-operator/api/v1alpha1"
 	kuadrantv1beta1 "github.com/kuadrant/kuadrant-operator/api/v1beta1"
 	kuadrantv1beta2 "github.com/kuadrant/kuadrant-operator/api/v1beta2"
+
+	// kuadrantiov1alpha1 "github.com/kuadrant/kuadrant-operator/apis/kuadrant.io/v1alpha1"
 	"github.com/kuadrant/kuadrant-operator/controllers"
+	// kuadrantiocontrollers "github.com/kuadrant/kuadrant-operator/controllers/kuadrant.io"
 	"github.com/kuadrant/kuadrant-operator/pkg/library/fieldindexers"
 	"github.com/kuadrant/kuadrant-operator/pkg/library/kuadrant"
 	"github.com/kuadrant/kuadrant-operator/pkg/library/reconcilers"
@@ -83,6 +86,7 @@ func init() {
 	utilruntime.Must(kuadrantv1beta2.AddToScheme(scheme))
 	utilruntime.Must(kuadrantdnsv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(certmanv1.AddToScheme(scheme))
+	// utilruntime.Must(kuadrantiov1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 
 	logger := log.NewLogger(
@@ -277,6 +281,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err = (&controllers.EffectivePolicyReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "EffectivePolicy")
+		os.Exit(1)
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

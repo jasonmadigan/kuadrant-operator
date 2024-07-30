@@ -257,6 +257,32 @@ rules:
 - apiGroups:
   - kuadrant.io
   resources:
+  - effectivepolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kuadrant.io
+  resources:
+  - effectivepolicies/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - kuadrant.io
+  resources:
+  - effectivepolicies/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - kuadrant.io
+  resources:
   - kuadrants
   verbs:
   - create
@@ -385,6 +411,22 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - gateways
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - operator.authorino.kuadrant.io
