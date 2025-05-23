@@ -13,3 +13,6 @@ spec:
       rates:
       - limit: 50
         window: 1m
+      tokens:
+      - expression: "request.headers['x-user-id']"
+      - expression: "request.path"

@@ -1,0 +1,35 @@
+apiVersion: kuadrant.io/v1alpha1
+kind: TokenRateLimitPolicy
+metadata:
+  name: toystore-token-httproute
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: toystore
+  limits:
+    "api-key-daily-limit":
+      rates:
+      - limit: 1000
+        window: 24h
+      counters:
+      - expression: "request.headers['x-api-key']"
+      when:
+      - predicate: "has(request.headers['x-api-key'])"
+    "authenticated-user-hourly":
+      rates:
+      - limit: 100
+        window: 1h
+      counters:
+      - expression: "auth.identity.username"
+      when:
+      - predicate: "has(auth.identity.username)"
+    "admin-operations-per-user":
+      rates:
+      - limit: 50
+        window: 1h
+      counters:
+      - expression: "auth.identity.username"
+      when:
+      - predicate: "request.path.startsWith('/admin/')"
+      - predicate: "auth.identity.group == 'admin'"

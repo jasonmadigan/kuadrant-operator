@@ -32,6 +32,7 @@ import (
 	gatewayapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 
 	kuadrantv1 "github.com/kuadrant/kuadrant-operator/api/v1"
+	kuadrantv1alpha1 "github.com/kuadrant/kuadrant-operator/api/v1alpha1"
 	kuadrantv1beta1 "github.com/kuadrant/kuadrant-operator/api/v1beta1"
 	"github.com/kuadrant/kuadrant-operator/internal/authorino"
 	kuadrantgatewayapi "github.com/kuadrant/kuadrant-operator/internal/gatewayapi"
@@ -706,5 +707,14 @@ func AuthorinoIsReady(cl client.Client, key client.ObjectKey) func(g Gomega, ctx
 		readyCondition := authorino.FindAuthorinoStatusCondition(authorinoObj.Status.Conditions, "Ready")
 		g.Expect(readyCondition).ToNot(BeNil())
 		g.Expect(readyCondition.Status).To(Equal(corev1.ConditionTrue))
+	}
+}
+
+func TokenRateLimitPolicyIsReady(ctx context.Context, cl client.Client, key client.ObjectKey) func(g Gomega) {
+	return func(g Gomega) {
+		policy := &kuadrantv1alpha1.TokenRateLimitPolicy{}
+		g.Expect(cl.Get(ctx, key, policy)).To(Succeed())
+		g.Expect(meta.IsStatusConditionTrue(policy.Status.Conditions, "Accepted")).To(BeTrue())
+		g.Expect(meta.IsStatusConditionTrue(policy.Status.Conditions, "Enforced")).To(BeTrue())
 	}
 }
